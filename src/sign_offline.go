@@ -27,8 +27,10 @@ const (
 	edString   = "ed"
 )
 
-var sigOutput = os.Stderr
-var infoOutput = os.Stdout
+var (
+	sigOutput  = os.Stderr
+	infoOutput = os.Stdout
+)
 
 type args struct {
 	mnemonic  string
