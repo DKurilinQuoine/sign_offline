@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bufio"
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"io"
@@ -27,6 +27,15 @@ const (
 	edString   = "ed"
 )
 
+var sigOutput = os.Stderr
+var infoOutput = os.Stdout
+
+type args struct {
+	mnemonic  string
+	algorithm int
+	noTrim    bool
+}
+
 func validateMnemonic(mnemonic string) {
 	words := strings.Split(mnemonic, " ")
 	if len(words) != mnemonicLength {
@@ -34,15 +43,19 @@ func validateMnemonic(mnemonic string) {
 	}
 }
 
-func getSignBytes() []byte {
-	_, err := fmt.Fprintf(os.Stderr, "\nEnter bytes to sign:\n")
-
-	inputReader := bufio.NewReader(os.Stdin)
-	signBytes, err := inputReader.ReadBytes('\n')
+func getSignBytes(noTrim bool) []byte {
+	signBytes, err := ioutil.ReadAll(os.Stdin)
 	if err != nil && err != io.EOF {
 		panic("Failed to get sign bytes: " + err.Error())
 	}
-	fmt.Fprintf(os.Stderr, "\nReady to sign %d bytes\n", len(signBytes))
+
+	if !noTrim {
+		initialSize := len(signBytes)
+		signBytes = []byte(strings.Trim(string(signBytes), "\n \r"))
+		fmt.Fprintf(infoOutput, "%d bytes were trimmed", initialSize-len(signBytes))
+	}
+
+	fmt.Fprintf(infoOutput, "\nReady to sign %d bytes\n", len(signBytes))
 	return signBytes
 }
 
@@ -57,29 +70,25 @@ func getAlgorithm(alg string) int {
 	}
 }
 
-func processArgs() (mnemonic string, signBytes []byte, algorithm int) {
+func getInputArgs() (args args) {
 	mnemonicPtr := flag.String("mnemonic", "", "secret phrase")
 	algPtr := flag.String("algorithm", "secp", "private key algorithm")
+	noTrimPtr := flag.Bool("notrim", false, "don't trim sign bytes")
 	flag.Parse()
 
-	mnemonic = *mnemonicPtr
-	mnemonic = strings.Trim(mnemonic, " ")
-	fmt.Println(mnemonic)
-	validateMnemonic(mnemonic)
+	args.mnemonic = *mnemonicPtr
+	args.mnemonic = strings.Trim(args.mnemonic, " ")
+	validateMnemonic(args.mnemonic)
 
-	signBytes = getSignBytes()
-
-	algorithm = getAlgorithm(*algPtr)
+	args.algorithm = getAlgorithm(*algPtr)
+	args.noTrim = *noTrimPtr
 	return
 }
 
 func privateKeyFromMnemonic(mnemonic string, algorithm int) crypto.PrivKey {
-
 	seed := bip39.MnemonicToSeed(mnemonic)
 	masterPriv, ch := hd.ComputeMastersFromSeed(seed)
 	derivedPriv, _ := hd.DerivePrivateKeyForPath(masterPriv, ch, hd.FullFundraiserPath)
-
-	return secp256k1.PrivKeySecp256k1(derivedPriv)
 
 	switch algorithm {
 	case algorithmSecp:
@@ -107,11 +116,11 @@ func sign(pkey crypto.PrivKey, signBytes []byte) []byte {
 }
 
 func main() {
-	mnemonic, signBytes, algorithm := processArgs()
+	inputArgs := getInputArgs()
+	signBytes := getSignBytes(inputArgs.noTrim)
 
-	pkey := privateKeyFromMnemonic(mnemonic, algorithm)
+	pkey := privateKeyFromMnemonic(inputArgs.mnemonic, inputArgs.algorithm)
 
 	signature := sign(pkey, signBytes)
-	ioutil.WriteFile("/Users/dmitry.kurilin/sig", signature, 0644)
-	//	binary.Write(os.Stdout, binary.BigEndian, signature)
+	binary.Write(sigOutput, binary.BigEndian, signature)
 }
