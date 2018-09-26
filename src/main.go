@@ -11,7 +11,7 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/bip39"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/hd"
-	"github.com/tendermint/go-amino"
+	amino "github.com/tendermint/go-amino"
 	"github.com/tendermint/tendermint/crypto"
 	"github.com/tendermint/tendermint/crypto/ed25519"
 	"github.com/tendermint/tendermint/crypto/secp256k1"
@@ -19,9 +19,6 @@ import (
 
 const (
 	mnemonicLength = 24
-
-	algorithmSecp = 0
-	algorithmEd   = 1
 
 	secpString = "secp"
 	edString   = "ed"
@@ -34,10 +31,26 @@ var (
 
 type args struct {
 	mnemonic  string
-	algorithm int
+	algorithm string
 	noTrim    bool
 }
 
+// public
+
+// Sign generates a private key based on mnemonic and algorithm and signs signBytes
+func Sign(mnemonic string, signBytes []byte, algorithm string) []byte {
+	pkey := privateKeyFromMnemonic(mnemonic, algorithm)
+	return sign(pkey, signBytes)
+}
+
+func main() {
+	inputArgs := getInputArgs()
+	signBytes := getSignBytes(inputArgs.noTrim)
+	signature := Sign(inputArgs.mnemonic, signBytes, inputArgs.algorithm)
+	binary.Write(sigOutput, binary.BigEndian, signature)
+}
+
+// private
 func validateMnemonic(mnemonic string) {
 	words := strings.Split(mnemonic, " ")
 	if len(words) != mnemonicLength {
@@ -61,41 +74,18 @@ func getSignBytes(noTrim bool) []byte {
 	return signBytes
 }
 
-func getAlgorithm(alg string) int {
-	switch alg {
-	case secpString:
-		return algorithmSecp
-	case edString:
-		return algorithmEd
-	default:
-		panic("Invalid private key algorithm")
+func privateKeyFromMnemonic(mnemonic string, algorithm string) crypto.PrivKey {
+	seed, err := bip39.MnemonicToSeedWithErrChecking(mnemonic)
+	if err != nil {
+		panic(err)
 	}
-}
-
-func getInputArgs() (args args) {
-	mnemonicPtr := flag.String("mnemonic", "", "secret phrase")
-	algPtr := flag.String("algorithm", "secp", "private key algorithm")
-	noTrimPtr := flag.Bool("notrim", false, "don't trim sign bytes")
-	flag.Parse()
-
-	args.mnemonic = *mnemonicPtr
-	args.mnemonic = strings.Trim(args.mnemonic, " ")
-	validateMnemonic(args.mnemonic)
-
-	args.algorithm = getAlgorithm(*algPtr)
-	args.noTrim = *noTrimPtr
-	return
-}
-
-func privateKeyFromMnemonic(mnemonic string, algorithm int) crypto.PrivKey {
-	seed := bip39.MnemonicToSeed(mnemonic)
 	masterPriv, ch := hd.ComputeMastersFromSeed(seed)
 	derivedPriv, _ := hd.DerivePrivateKeyForPath(masterPriv, ch, hd.FullFundraiserPath)
 
 	switch algorithm {
-	case algorithmSecp:
+	case secpString:
 		return secp256k1.PrivKeySecp256k1(derivedPriv)
-	case algorithmEd:
+	case edString:
 		return ed25519.GenPrivKeyFromSecret(derivedPriv[:])
 	default:
 		panic("Invalid private key algorithm")
@@ -114,15 +104,25 @@ func sign(pkey crypto.PrivKey, signBytes []byte) []byte {
 		panic(err)
 	}
 
+	pub := pkey.PubKey()
+	if !pub.VerifyBytes(signBytes, signed) {
+		panic("invalid signature")
+	}
+
 	return sig
 }
 
-func main() {
-	inputArgs := getInputArgs()
-	signBytes := getSignBytes(inputArgs.noTrim)
+func getInputArgs() (args args) {
+	mnemonicPtr := flag.String("mnemonic", "", "secret phrase")
+	algPtr := flag.String("algorithm", "secp", "private key algorithm")
+	noTrimPtr := flag.Bool("notrim", false, "don't trim sign bytes")
+	flag.Parse()
 
-	pkey := privateKeyFromMnemonic(inputArgs.mnemonic, inputArgs.algorithm)
+	args.mnemonic = *mnemonicPtr
+	args.mnemonic = strings.Trim(args.mnemonic, " ")
+	validateMnemonic(args.mnemonic)
 
-	signature := sign(pkey, signBytes)
-	binary.Write(sigOutput, binary.BigEndian, signature)
+	args.algorithm = *algPtr
+	args.noTrim = *noTrimPtr
+	return
 }
